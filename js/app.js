@@ -49,7 +49,7 @@ const feedbackTopics = document.getElementById("feedbackTopics");
 
 // Config Constants
 const DEFAULT_GEMINI_API_KEY = "AIzaSyAxTu_b7jWrcCv5f1jChHxUdUMH4GP6mkc";
-const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-1.5-flash", "gemini-2.0-flash-exp"];
+const GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-2.0-flash-exp"];
 const GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts";
 const GEMINI_TTS_VOICE = "Kore";
 const LiveSpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1587,10 +1587,6 @@ async function callGeminiParts(parts, responseMimeType = null) {
     }
 
     lastErrorMessage = readApiError(data);
-
-    if (!isRetryableModelError(lastErrorMessage)) {
-      throw new Error(lastErrorMessage);
-    }
   }
 
   throw new Error(lastErrorMessage);
