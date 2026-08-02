@@ -23,6 +23,12 @@ const eyeIcon = document.getElementById("eyeIcon");
 const apiKeyStatus = document.getElementById("apiKeyStatus");
 const questionCountSelect = document.getElementById("questionCountSelect");
 
+// API Key Modal selectors
+const apiKeyModal = document.getElementById("apiKeyModal");
+const modalApiKeyInput = document.getElementById("modalApiKeyInput");
+const closeApiKeyModalBtn = document.getElementById("closeApiKeyModalBtn");
+const saveApiKeyBtn = document.getElementById("saveApiKeyBtn");
+
 // Dashboard Widgets selectors
 const turnCounter = document.getElementById("turnCounter");
 const progressBar = document.getElementById("progressBar");
@@ -165,6 +171,30 @@ function initApiKey() {
     }
     updateStartAvailability();
   });
+
+  // Modal Setup Listeners
+  if (closeApiKeyModalBtn) {
+    closeApiKeyModalBtn.addEventListener("click", () => {
+      apiKeyModal.classList.remove("active");
+    });
+  }
+
+  if (saveApiKeyBtn) {
+    saveApiKeyBtn.addEventListener("click", () => {
+      const keyVal = modalApiKeyInput.value.trim();
+      if (keyVal) {
+        localStorage.setItem("resume_interview_user_api_key", keyVal);
+        apiKeyInput.value = keyVal;
+        apiKeyStatus.textContent = "Custom API key active.";
+        apiKeyStatus.style.color = "var(--brand)";
+        apiKeyModal.classList.remove("active");
+        // Auto-trigger interview start!
+        startBtn.click();
+      } else {
+        alert("Please paste a valid Gemini API key.");
+      }
+    });
+  }
 }
 
 function getApiKey() {
@@ -575,6 +605,13 @@ resumeFile.addEventListener("change", async (event) => {
 startBtn.addEventListener("click", async () => {
   if (!hasResumeReady()) {
     errorText.textContent = "Upload a TXT, PDF, or DOCX resume first.";
+    return;
+  }
+
+  const userKey = localStorage.getItem("resume_interview_user_api_key");
+  if (!userKey || !userKey.trim()) {
+    apiKeyModal.classList.add("active");
+    modalApiKeyInput.focus();
     return;
   }
 

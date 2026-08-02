@@ -246,6 +246,37 @@
       </div>
     </div>
   </div>
+  
+  <!-- API Key Setup Modal -->
+  <div class="report-modal-overlay" id="apiKeyModal" style="z-index: 10000;">
+    <div class="report-modal" style="max-width: 480px; width: 90%; padding: 24px; text-align: center;">
+      <h3 style="margin-top: 0; font-family: 'Outfit', sans-serif; font-size: 20px; color: var(--text-color);">🔑 Gemini API Key Required</h3>
+      <p style="font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 18px;">
+        To start the interview, you need your own Gemini API key. The default developer key has expired. 
+        <br><br>
+        Getting a key is **100% free** and takes less than 30 seconds!
+      </p>
+      
+      <a href="https://aistudio.google.com/" target="_blank" class="primary-btn" style="display: inline-block; text-decoration: none; margin-bottom: 18px; font-size: 13px; padding: 10px 16px; border-radius: 10px;">
+        🌐 Get Free Key from Google AI Studio
+      </a>
+      
+      <div style="text-align: left; margin-bottom: 18px;">
+        <label style="display: block; font-size: 12px; margin-bottom: 6px; font-weight: 600; color: var(--text-color);">Paste your API Key here:</label>
+        <input
+          type="password"
+          id="modalApiKeyInput"
+          placeholder="AIzaSy..."
+          style="width: 100%; padding: 10px; border-radius: 10px; background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-color); font-family: inherit; font-size: 13px; outline: none;"
+        />
+      </div>
+      
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button class="secondary-btn" id="closeApiKeyModalBtn" style="padding: 10px 16px; font-size: 13px; border-radius: 10px;">Cancel</button>
+        <button class="primary-btn" id="saveApiKeyBtn" style="padding: 10px 16px; font-size: 13px; border-radius: 10px;">Save & Start</button>
+      </div>
+    </div>
+  </div>
 
   <script src="https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js"></script>
   <script type="module" src="./js/app.js?v=20260602-2"></script>
