@@ -12,6 +12,7 @@ const micBtn = document.getElementById("micBtn");
 const repeatBtn = document.getElementById("repeatBtn");
 const endBtn = document.getElementById("endBtn");
 const resetBtn = document.getElementById("resetBtn");
+const helperText = document.getElementById("helperText");
 const errorText = document.getElementById("errorText");
 
 // Settings & Config Panel selectors
@@ -38,6 +39,16 @@ const timerDisplay = document.getElementById("timerDisplay");
 const soundWaveContainer = document.getElementById("soundWaveContainer");
 const soundWaveLabel = document.getElementById("soundWaveLabel");
 
+// Job Role & Webcam selectors
+const jobTitleInput = document.getElementById("jobTitleInput");
+const jobDescInput = document.getElementById("jobDescInput");
+const experienceSelect = document.getElementById("experienceSelect");
+const toggleWebcamBtn = document.getElementById("toggleWebcamBtn");
+const webcamVideo = document.getElementById("webcamVideo");
+const webcamPlaceholder = document.getElementById("webcamPlaceholder");
+const webcamLiveIndicator = document.getElementById("webcamLiveIndicator");
+let webcamStream = null;
+
 // Report Modal selectors
 const reportCardModal = document.getElementById("reportCardModal");
 const closeReportBtn = document.getElementById("closeReportBtn");
@@ -48,7 +59,7 @@ const feedbackWeaknesses = document.getElementById("feedbackWeaknesses");
 const feedbackTopics = document.getElementById("feedbackTopics");
 
 // Config Constants
-const DEFAULT_GEMINI_API_KEY = "AIzaSyAxTu_b7jWrcCv5f1jChHxUdUMH4GP6mkc";
+const DEFAULT_GEMINI_API_KEY = "";
 const GEMINI_MODELS = ["gemini-1.5-flash"];
 const GEMINI_TTS_VOICE = "Kore";
 const LiveSpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -91,6 +102,7 @@ let activeUserBubble = null;
 
 // Track if SpeechRecognition is actively started
 let isRecognitionActive = false;
+let suppressNextRecognitionEnd = false;
 
 // Sentence cancellation and sequential speech states
 let endRequested = false;
@@ -108,6 +120,51 @@ initTheme();
 initApiKey();
 syncFileSelectionUI();
 handleAutoLoadedFile();
+
+// Hook Job Role & Webcam input events
+if (jobTitleInput) jobTitleInput.addEventListener("input", updateStartAvailability);
+if (jobDescInput) jobDescInput.addEventListener("input", updateStartAvailability);
+if (experienceSelect) experienceSelect.addEventListener("change", updateStartAvailability);
+
+if (toggleWebcamBtn) {
+  toggleWebcamBtn.addEventListener("click", async () => {
+    if (webcamStream) {
+      stopWebcam();
+    } else {
+      try {
+        webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        if (webcamVideo) {
+          webcamVideo.srcObject = webcamStream;
+          webcamVideo.style.display = "block";
+        }
+        if (webcamPlaceholder) webcamPlaceholder.style.display = "none";
+        if (webcamLiveIndicator) webcamLiveIndicator.style.display = "flex";
+        toggleWebcamBtn.textContent = "📷 Stop Camera";
+        toggleWebcamBtn.classList.add("listening");
+      } catch (error) {
+        console.error("Failed to open webcam:", error);
+        alert("Could not access camera. Check your permissions.");
+      }
+    }
+  });
+}
+
+function stopWebcam() {
+  if (webcamStream) {
+    webcamStream.getTracks().forEach((track) => track.stop());
+    webcamStream = null;
+  }
+  if (webcamVideo) {
+    webcamVideo.srcObject = null;
+    webcamVideo.style.display = "none";
+  }
+  if (webcamPlaceholder) webcamPlaceholder.style.display = "flex";
+  if (webcamLiveIndicator) webcamLiveIndicator.style.display = "none";
+  if (toggleWebcamBtn) {
+    toggleWebcamBtn.textContent = "📷 Start Camera";
+    toggleWebcamBtn.classList.remove("listening");
+  }
+}
 
 // ----------------------------------------------------
 // Theme & Settings Handlers
@@ -143,7 +200,7 @@ function initApiKey() {
     apiKeyStatus.textContent = "Custom API key active.";
     apiKeyStatus.style.color = "var(--brand)";
   } else {
-    apiKeyStatus.textContent = "Using default developer key.";
+    apiKeyStatus.textContent = "Offline practice mode. Add a key for Gemini.";
     apiKeyStatus.style.color = "var(--text-muted)";
   }
 
@@ -165,7 +222,7 @@ function initApiKey() {
       apiKeyStatus.style.color = "var(--brand)";
     } else {
       localStorage.removeItem("resume_interview_user_api_key");
-      apiKeyStatus.textContent = "Using default developer key.";
+      apiKeyStatus.textContent = "Offline practice mode. Add a key for Gemini.";
       apiKeyStatus.style.color = "var(--text-muted)";
     }
     updateStartAvailability();
@@ -333,12 +390,26 @@ answerInput.addEventListener("input", () => {
   }
 });
 
+function setHelperText(message) {
+  if (helperText) {
+    helperText.textContent = message;
+  }
+}
+
+function syncVoiceButtonLabel() {
+  if (isListening) {
+    return;
+  }
+
+  micBtn.textContent = isVoiceCaptureAvailable() ? "Speak Answer" : "Voice Not Supported";
+}
+
 // ----------------------------------------------------
 // Live Speech Recognition & Audio Setup
 // ----------------------------------------------------
-if (!MEDIA_RECORDER_SUPPORTED) {
+if (!isVoiceCaptureAvailable()) {
   micBtn.disabled = true;
-  micBtn.textContent = "Mic Not Supported";
+  micBtn.textContent = "Voice Not Supported";
 }
 
 if (LiveSpeechRecognitionClass) {
@@ -383,10 +454,9 @@ if (LiveSpeechRecognitionClass) {
     
     // Check for critical browser SpeechRecognition errors (like network or blocked mic)
     if (event.error === "network" || event.error === "service-not-allowed" || event.error === "not-allowed") {
-      errorText.textContent = `Real-time sync failed (${event.error}). Switching to standard recording...`;
-      
       // Stop SpeechRecognition completely
       isListening = false;
+      suppressNextRecognitionEnd = true;
       stopLiveRecognition();
       
       // Clean up active real-time speech bubble
@@ -394,8 +464,28 @@ if (LiveSpeechRecognitionClass) {
         activeUserBubble.remove();
         activeUserBubble = null;
       }
+
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        statusText.textContent = "Microphone permission is blocked.";
+        errorText.textContent = "Allow microphone access, or type your answer and click Send Answer.";
+        setHelperText("Automatic captions need microphone permission. After allowing it, click Speak Answer again.");
+        resetVoiceControlsAfterFailure();
+        return;
+      }
+
+      if (!canTranscribeRecordedAudio()) {
+        statusText.textContent = "Live captions need a supported speech engine.";
+        errorText.textContent = "";
+        setHelperText("For automatic live text, open this localhost app in Chrome/Edge with microphone access, or add a Gemini API key for recorded-audio transcription.");
+        resetVoiceControlsAfterFailure();
+        return;
+      }
       
-      // Fallback: Trigger standard MediaRecorder recording flow directly!
+      statusText.textContent = "Real-time sync unavailable. Recording audio...";
+      errorText.textContent = "";
+      setHelperText("Recording fallback is active. With Gemini key enabled, your transcript preview updates in short chunks.");
+
+      // Fallback: Trigger standard MediaRecorder recording flow directly.
       startMediaRecorderFallback();
       return;
     }
@@ -409,9 +499,16 @@ if (LiveSpeechRecognitionClass) {
       activeUserBubble.remove();
       activeUserBubble = null;
     }
+    statusText.textContent = "Voice capture stopped. Type your answer or try again.";
+    setHelperText("Speak again, or type your answer and click Send Answer.");
   };
   liveRecognition.onend = async () => {
     isRecognitionActive = false;
+    if (suppressNextRecognitionEnd) {
+      suppressNextRecognitionEnd = false;
+      return;
+    }
+
     if (isListening) {
       try {
         startLiveRecognition();
@@ -437,6 +534,7 @@ if (LiveSpeechRecognitionClass) {
 
         if (shouldSubmitAfterListening) {
           statusText.textContent = "Sending answer...";
+          setHelperText("Answer captured from live speech. Sending it now...");
           shouldSubmitAfterListening = false;
           await submitAnswer();
         }
@@ -446,6 +544,7 @@ if (LiveSpeechRecognitionClass) {
           activeUserBubble = null;
         }
         statusText.textContent = "No clear answer captured. Try speaking again.";
+        setHelperText("Speak clearly after clicking Speak Answer, or type your answer.");
       }
     }
   };
@@ -473,8 +572,9 @@ if (questionCountSelect) {
 }
 
 micBtn.addEventListener("click", () => {
-  if (!MEDIA_RECORDER_SUPPORTED) {
-    errorText.textContent = "Voice recording is not supported in this browser.";
+  if (!isVoiceCaptureAvailable()) {
+    errorText.textContent = "";
+    setHelperText("This browser cannot provide live captions. Open http://127.0.0.1:4173 in Chrome/Edge, or add a Gemini API key in a browser with microphone recording.");
     return;
   }
 
@@ -607,19 +707,6 @@ startBtn.addEventListener("click", async () => {
     return;
   }
 
-  const userKey = localStorage.getItem("resume_interview_user_api_key");
-  if (!userKey || !userKey.trim()) {
-    apiKeyModal.classList.add("active");
-    modalApiKeyInput.focus();
-    return;
-  }
-
-  if (!getApiKey()) {
-    statusText.textContent = "Gemini API key is missing in the code.";
-    errorText.textContent = "";
-    return;
-  }
-
   errorText.textContent = "";
   interviewStarted = true;
   interviewTurn = 1;
@@ -638,6 +725,9 @@ startBtn.addEventListener("click", async () => {
   statusText.textContent = "Starting interview...";
 
   addMessage("system", "Interview started. The interviewer is preparing the first resume-based question.");
+  if (!getApiKey()) {
+    addMessage("system", "Offline practice mode is active. Add a Gemini API key for fully AI-generated questions and feedback.");
+  }
 
   try {
     const firstQuestion = await generateInterviewerReply(true);
@@ -647,7 +737,7 @@ startBtn.addEventListener("click", async () => {
 
     answerInput.disabled = false;
     sendBtn.disabled = true; // Disable until user types or speaks
-    micBtn.disabled = false;
+    micBtn.disabled = !isVoiceCaptureAvailable();
     repeatBtn.disabled = false;
     statusText.textContent = "Interview in progress.";
   } catch (error) {
@@ -822,6 +912,18 @@ async function playSentenceAndReveal(element, sentence, previousText, renderToke
   }
 
   if (useFallback) {
+    if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+      const wordDelayMs = getWordRevealDelay(words.length);
+      for (let i = 0; i < words.length; i += 1) {
+        if (renderToken !== currentRenderToken) return;
+        const visibleSentence = words.slice(0, i + 1).join(" ");
+        element.textContent = previousText ? `${previousText} ${visibleSentence}` : visibleSentence;
+        chatBox.scrollTop = chatBox.scrollHeight;
+        await wait(wordDelayMs);
+      }
+      return;
+    }
+
     // Browser Speech Synthesis Fallback Mode
     const utterance = new SpeechSynthesisUtterance(humanizeSpeechText(sentence));
     utterance.rate = 0.95;
@@ -863,8 +965,8 @@ async function playSentenceAndReveal(element, sentence, previousText, renderToke
 
     window.speechSynthesis.speak(utterance);
 
-    await playbackStarted.promise;
-    await playbackFinished.promise;
+    await Promise.race([playbackStarted.promise, wait(600)]);
+    await Promise.race([playbackFinished.promise, wait(Math.max(2500, words.length * 450))]);
   } else {
     // Gemini Premium AI Voice Mode
     const audioUrl = URL.createObjectURL(audioBlob);
@@ -943,6 +1045,11 @@ async function submitAnswer() {
   statusText.textContent = "Interviewer is thinking...";
 
   try {
+    if (interviewTurn >= getMaxQuestions()) {
+      await finishInterview();
+      return;
+    }
+
     interviewTurn += 1;
     const reply = await generateInterviewerReply(false);
     updateProgress(interviewTurn);
@@ -951,21 +1058,17 @@ async function submitAnswer() {
     conversationHistory.push({ role: "assistant", text: reply });
     lastQuestionSpoken = reply;
 
-    if (interviewTurn >= getMaxQuestions() + 1) {
-      await finishInterview();
-    } else {
-      statusText.textContent = "Interview in progress.";
-      answerInput.disabled = false;
-      sendBtn.disabled = true; // Wait for typing or speaking
-      micBtn.disabled = false;
-      repeatBtn.disabled = false;
-    }
+    statusText.textContent = "Interview in progress.";
+    answerInput.disabled = false;
+    sendBtn.disabled = true; // Wait for typing or speaking
+    micBtn.disabled = !isVoiceCaptureAvailable();
+    repeatBtn.disabled = false;
   } catch (error) {
     errorText.textContent = error.message || "Could not get interviewer reply.";
     statusText.textContent = "Something went wrong.";
     answerInput.disabled = false;
     sendBtn.disabled = !answerInput.value.trim();
-    micBtn.disabled = false;
+    micBtn.disabled = !isVoiceCaptureAvailable();
     repeatBtn.disabled = false;
   }
 }
@@ -1230,6 +1333,7 @@ async function startVoiceCapture() {
       micBtn.classList.add("listening");
       statusText.textContent = "Listening...";
       errorText.textContent = "";
+      setHelperText("Live captions are on. Your words should appear here while you speak.");
       
       // Create visual user message bubble in the chat box in real-time
       activeUserBubble = document.createElement("div");
@@ -1245,6 +1349,14 @@ async function startVoiceCapture() {
       startHesitationWatch();
     }, 200);
   } else {
+    if (!canTranscribeRecordedAudio()) {
+      statusText.textContent = "Live captions need browser speech support or Gemini.";
+      errorText.textContent = "";
+      setHelperText("For automatic live text, use Chrome/Edge microphone speech recognition, or add a Gemini API key for audio transcription.");
+      resetVoiceControlsAfterFailure();
+      return;
+    }
+
     // Fallback to MediaRecorder + Gemini WAV transcription (for browsers without SpeechRecognition support)
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1267,6 +1379,7 @@ async function startVoiceCapture() {
         micBtn.classList.add("listening");
         statusText.textContent = "Listening...";
         errorText.textContent = "";
+        setHelperText("Recording fallback is active. Transcript preview updates every few seconds.");
 
         activeUserBubble = document.createElement("div");
         activeUserBubble.className = "message user active-speech";
@@ -1340,6 +1453,7 @@ async function startVoiceCapture() {
 
             if (shouldSubmitAfterListening) {
               statusText.textContent = "Answer captured. Sending it now...";
+              setHelperText("Answer captured from your recording. Sending it now...");
               shouldSubmitAfterListening = false;
               await submitAnswer();
               return;
@@ -1351,6 +1465,7 @@ async function startVoiceCapture() {
             }
             shouldSubmitAfterListening = false;
             statusText.textContent = "No clear answer captured. Try speaking again.";
+            setHelperText("Speak clearly after clicking Speak Answer, or type your answer.");
           }
         } catch (error) {
           if (activeUserBubble) {
@@ -1358,8 +1473,9 @@ async function startVoiceCapture() {
             activeUserBubble = null;
           }
           shouldSubmitAfterListening = false;
-          errorText.textContent = error.message || "Could not transcribe your answer.";
+          errorText.textContent = "";
           statusText.textContent = "Voice answer failed. Try again.";
+          setHelperText(error.message || "Could not transcribe your answer. Type your answer or try again.");
           stopStreamTracks(stream);
         }
       };
@@ -1368,14 +1484,20 @@ async function startVoiceCapture() {
     } catch (error) {
       if (error && error.name === "NotAllowedError") {
         errorText.textContent = "Microphone permission is blocked. Allow mic access in your browser.";
+        setHelperText("Automatic captions need microphone permission.");
       } else {
-        errorText.textContent = "Could not start microphone recording.";
+        errorText.textContent = "";
+        setHelperText("Could not start microphone recording. Type your answer or try again.");
       }
     }
   }
 }
 
 async function transcribeAudioWithGemini(audioBlob) {
+  if (!getApiKey()) {
+    throw new Error("Recorded-audio transcription needs a Gemini API key. Type your answer instead.");
+  }
+
   const audioBase64 = await blobToBase64(audioBlob);
   
   let cleanMimeType = audioBlob.type || "audio/webm";
@@ -1442,14 +1564,29 @@ async function extractDocxText(file) {
 }
 
 async function generateInterviewerReply(isFirstQuestion) {
+  if (!getApiKey()) {
+    return generateLocalInterviewerReply(isFirstQuestion);
+  }
+
   const modeInstruction = getModeInstruction(interviewMode);
   const historyText = conversationHistory
     .map((item) => `${item.role === "user" ? "Candidate" : "Interviewer"}: ${item.text}`)
     .join("\n");
 
-  const resumeSection = resumeText.trim()
-    ? `Resume:\n${resumeText}`
-    : "Resume:\nThe resume file is attached with this request. Read it directly before asking questions.";
+  const jobConfigText = getJobConfigurationText();
+  let resumeSection = "";
+  if (resumeText.trim() || canSendResumeInline()) {
+    resumeSection = resumeText.trim()
+      ? `Resume:\n${resumeText}`
+      : "Resume:\nThe resume file is attached with this request. Read it directly before asking questions.";
+    if (jobConfigText) {
+      resumeSection += `\n\nTarget Job Role Configuration:\n${jobConfigText}`;
+    }
+  } else if (jobConfigText) {
+    resumeSection = `Target Job Role Configuration (No Resume Uploaded):\n${jobConfigText}`;
+  } else {
+    resumeSection = "Resume:\nNone uploaded. Ask general professional questions.";
+  }
 
   const prompt = `
 You are a real, warm human mock interviewer. 
@@ -1457,12 +1594,12 @@ You are a real, warm human mock interviewer.
 Rules:
 - Sound highly humanized, conversational, and natural.
 - Use natural conversational transitions or short conversational receipts (e.g. "Ah, got it!", "That's really interesting.", "Okay, makes sense.", "Well, that's a common challenge...", "Great.") at the beginning of your replies.
-- Ask questions based on the candidate's resume.
+- Ask questions based on the candidate's resume and/or target job role details.
 - Ask exactly one question at a time.
 - If the candidate struggles, encourage them warmly.
 - If the answer is decent, acknowledge it briefly and ask a natural, conversational follow-up.
 - Keep your reply short, conversational, and completely free of bullet lists or numbered formats.
-- Every question must flow naturally from the candidate's previous answer or resume.
+- Every question must flow naturally from the candidate's previous answer or resume/job details.
 
 Interview mode:
 ${modeInstruction}
@@ -1474,11 +1611,17 @@ ${historyText || "No previous conversation yet."}
 
 Task:
 ${isFirstQuestion
-  ? "Start the mock interview with the best first resume-based question."
-  : "Reply to the candidate's latest answer like a human interviewer, then ask the next resume-based question."}
+  ? "Start the mock interview with the best first question based on the resume/job details."
+  : "Reply to the candidate's latest answer like a human interviewer, then ask the next question based on the resume/job details."}
 `;
 
-  const data = await callGemini(prompt);
+  let data;
+  try {
+    data = await callGemini(prompt);
+  } catch (error) {
+    console.warn("Gemini question generation failed. Using local fallback.", error);
+    return generateLocalInterviewerReply(isFirstQuestion);
+  }
 
   if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0]) {
     throw new Error("Gemini returned an incomplete response.");
@@ -1488,13 +1631,26 @@ ${isFirstQuestion
 }
 
 async function generateFeedback() {
+  if (!getApiKey()) {
+    return generateLocalFeedback();
+  }
+
   const historyText = conversationHistory
     .map((item) => `${item.role === "user" ? "Candidate" : "Interviewer"}: ${item.text}`)
     .join("\n");
 
-  const resumeSection = resumeText.trim()
-    ? `Resume:\n${resumeText}`
-    : "Resume:\nThe resume file is attached with this request. Read it directly before giving feedback.";
+  const jobConfigText = getJobConfigurationText();
+  let resumeSection = "";
+  if (resumeText.trim() || canSendResumeInline()) {
+    resumeSection = resumeText.trim()
+      ? `Resume:\n${resumeText}`
+      : "Resume:\nThe resume file is attached with this request. Read it directly before giving feedback.";
+    if (jobConfigText) {
+      resumeSection += `\n\nTarget Job Role Configuration:\n${jobConfigText}`;
+    }
+  } else if (jobConfigText) {
+    resumeSection = `Target Job Role Configuration (No Resume): ${jobConfigText}`;
+  }
 
   const prompt = `
 You are an expert interview coach. Analyze the candidate's mock interview performance, speaking skills, confidence level, disfluencies, grammar mistakes, and overall alignment.
@@ -1525,13 +1681,123 @@ Interview transcript:
 ${historyText}
 `;
 
-  const data = await callGemini(prompt, "application/json");
+  let data;
+  try {
+    data = await callGemini(prompt, "application/json");
+  } catch (error) {
+    console.warn("Gemini feedback generation failed. Using local fallback.", error);
+    return generateLocalFeedback();
+  }
 
   if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0]) {
     throw new Error("Gemini returned incomplete feedback.");
   }
 
   return data.candidates[0].content.parts[0].text.trim();
+}
+
+function generateLocalInterviewerReply(isFirstQuestion) {
+  const profile = extractResumeProfile(resumeText);
+  const topic = profile.topics[(interviewTurn - 1) % profile.topics.length] || "your recent work";
+  const project = profile.projects[(interviewTurn - 1) % profile.projects.length] || topic;
+  const pressurePrefix = interviewMode === "pressure"
+    ? "Let's be specific here."
+    : interviewMode === "realistic"
+      ? "Thanks, let's go a level deeper."
+      : "Great, let's explore that together.";
+
+  if (isFirstQuestion) {
+    return `Thanks for sharing your resume. Could you walk me through your background and connect it to your strongest experience with ${topic}?`;
+  }
+
+  const prompts = [
+    `${pressurePrefix} What was the hardest technical decision you made while working on ${project}, and how did you validate that it was the right choice?`,
+    `${pressurePrefix} Can you describe a measurable result or improvement from your work with ${topic}?`,
+    `${pressurePrefix} Tell me about a challenge you faced in ${project}. What did you try first, what changed, and what did you learn?`,
+    `${pressurePrefix} If you had to improve one part of your ${topic} experience today, what would you change and why?`,
+    `${pressurePrefix} How would you explain your work on ${project} to a non-technical stakeholder?`
+  ];
+
+  return prompts[(interviewTurn - 2 + prompts.length) % prompts.length];
+}
+
+function generateLocalFeedback() {
+  const userAnswers = conversationHistory
+    .filter((item) => item.role === "user")
+    .map((item) => item.text);
+  const allAnswers = userAnswers.join(" ");
+  const fillerMatches = allAnswers.match(/\b(um|uh|ah|like|basically|you know|i mean)\b/gi) || [];
+  const averageWords = userAnswers.length
+    ? Math.round(userAnswers.reduce((sum, answer) => sum + answer.split(/\s+/).filter(Boolean).length, 0) / userAnswers.length)
+    : 0;
+  const profile = extractResumeProfile(resumeText);
+  const confidenceScore = averageWords >= 35 ? 82 : averageWords >= 18 ? 74 : 65;
+  const grammarScore = Math.max(68, 92 - fillerMatches.length * 3);
+  const overallScore = Math.round((confidenceScore + grammarScore + 78) / 3);
+
+  return JSON.stringify({
+    overallScore,
+    grammarScore,
+    confidenceScore,
+    fillerWordCount: fillerMatches.length,
+    pacing: averageWords >= 45 ? "Good" : "Could use more detail",
+    overview: "This offline report is based on answer length, resume-topic coverage, and common speech patterns. Add a Gemini API key for deeper semantic feedback, but this gives you a practical baseline for rehearsal.",
+    strengths: [
+      userAnswers.length ? "Completed the practice flow with resume-focused answers." : "Started a resume-focused practice session.",
+      `Discussed topics related to ${profile.topics.slice(0, 2).join(" and ")}.`,
+      "Used the mock interview format to practice structured recall."
+    ],
+    improvements: [
+      "Use the STAR structure: situation, task, action, result.",
+      "Add numbers, scale, latency, revenue, users, or time saved where possible.",
+      "Close each answer with what you learned or how you would improve it."
+    ],
+    focusTopics: profile.topics.slice(0, 3),
+    mistakes: fillerMatches.length
+      ? [{
+          original: "Repeated filler words such as " + Array.from(new Set(fillerMatches.map((word) => word.toLowerCase()))).join(", "),
+          correction: "Pause briefly instead of filling silence.",
+          explanation: "Intentional pauses sound more confident and give you time to organize the next sentence."
+        }]
+      : []
+  });
+}
+
+function extractResumeProfile(text) {
+  const fallbackTopics = ["your technical projects", "your core skills", "your recent experience"];
+  const words = String(text || "")
+    .replace(/[^a-zA-Z0-9+#.\s-]/g, " ")
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 3);
+  const stopWords = new Set([
+    "and", "the", "with", "for", "from", "that", "this", "you", "your", "are", "was",
+    "were", "built", "using", "experience", "skills", "resume", "candidate", "engineer"
+  ]);
+  const counts = new Map();
+
+  for (const word of words) {
+    const normalized = word.toLowerCase();
+    if (stopWords.has(normalized)) {
+      continue;
+    }
+    counts.set(word, (counts.get(word) || 0) + 1);
+  }
+
+  const topics = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([word]) => word);
+
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 12);
+
+  return {
+    topics: topics.length ? topics : fallbackTopics,
+    projects: lines.length ? lines.slice(0, 5) : fallbackTopics
+  };
 }
 
 async function callGemini(prompt, responseMimeType = null) {
@@ -1713,6 +1979,11 @@ function clearResumeState(resetPicker = true) {
   conversationHistory = [];
   lastQuestionSpoken = "";
 
+  if (jobTitleInput) jobTitleInput.value = "";
+  if (jobDescInput) jobDescInput.value = "";
+  if (experienceSelect) experienceSelect.value = "";
+  stopWebcam();
+
   if (resetPicker) {
     resumeFile.value = "";
   }
@@ -1730,21 +2001,45 @@ function updateStartAvailability() {
   if (!hasResumeReady()) {
     startBtn.disabled = true;
     micBtn.disabled = true;
+    syncVoiceButtonLabel();
     repeatBtn.disabled = true;
-    statusText.textContent = "Upload a TXT, PDF, or DOCX resume and start the interview.";
+    statusText.textContent = "Upload a resume or enter a Target Job Role to start the interview.";
     return;
   }
 
   startBtn.disabled = false;
-  micBtn.disabled = !interviewStarted;
+  micBtn.disabled = !interviewStarted || !isVoiceCaptureAvailable();
+  syncVoiceButtonLabel();
   repeatBtn.disabled = !lastQuestionSpoken.trim();
-  statusText.textContent = resumeText.trim()
-    ? "Resume loaded. You can start the interview now."
-    : "Resume uploaded. You can start the interview now.";
+
+  const hasJob = getJobConfigurationText().trim();
+  const hasRes = resumeText.trim() || canSendResumeInline();
+
+  if (hasRes && hasJob) {
+    statusText.textContent = "Resume and Job Role configured. Click Start Interview.";
+  } else if (hasRes) {
+    statusText.textContent = "Resume loaded. Click Start Interview.";
+  } else {
+    statusText.textContent = "Job Role configured. Click Start Interview.";
+  }
 }
 
 function hasResumeReady() {
-  return Boolean(resumeText.trim() || canSendResumeInline());
+  return Boolean(resumeText.trim() || canSendResumeInline() || getJobConfigurationText().trim());
+}
+
+function getJobConfigurationText() {
+  if (!jobTitleInput || !jobDescInput || !experienceSelect) return "";
+  const title = jobTitleInput.value.trim();
+  const desc = jobDescInput.value.trim();
+  const exp = experienceSelect.value;
+  
+  let parts = [];
+  if (title) parts.push(`Job Role: ${title}`);
+  if (desc) parts.push(`Tech Stack/Skills: ${desc}`);
+  if (exp) parts.push(`Experience Level: ${exp}`);
+  
+  return parts.join("\n");
 }
 
 function canSendResumeInline() {
@@ -2159,7 +2454,38 @@ function stopLiveRecognition() {
   }
 }
 
+function canTranscribeRecordedAudio() {
+  return Boolean(getApiKey() && MEDIA_RECORDER_SUPPORTED);
+}
+
+function isVoiceCaptureAvailable() {
+  return Boolean(LiveSpeechRecognitionClass || canTranscribeRecordedAudio());
+}
+
+function resetVoiceControlsAfterFailure() {
+  isListening = false;
+  shouldSubmitAfterListening = false;
+  micBtn.textContent = "Speak Answer";
+  micBtn.classList.remove("listening");
+  setSoundWaveActive(false);
+  stopHesitationWatch();
+
+  if (interviewStarted && !isInterviewerSpeaking) {
+    answerInput.disabled = false;
+    sendBtn.disabled = !answerInput.value.trim();
+    micBtn.disabled = !isVoiceCaptureAvailable();
+  }
+}
+
 async function startMediaRecorderFallback() {
+  if (!canTranscribeRecordedAudio()) {
+    statusText.textContent = "Live captions need browser speech support or Gemini.";
+    errorText.textContent = "";
+    setHelperText("For automatic live text, use Chrome/Edge microphone speech recognition, or add a Gemini API key for audio transcription.");
+    resetVoiceControlsAfterFailure();
+    return;
+  }
+
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     recordedChunks = [];
@@ -2180,7 +2506,8 @@ async function startMediaRecorderFallback() {
       micBtn.textContent = "Stop Speaking";
       micBtn.classList.add("listening");
       statusText.textContent = "Listening (Standard)...";
-      errorText.textContent = "Real-time sync unavailable. Recording audio...";
+      errorText.textContent = "";
+      setHelperText("Recording fallback is active. Transcript preview updates every few seconds.");
 
       activeUserBubble = document.createElement("div");
       activeUserBubble.className = "message user active-speech";
@@ -2252,11 +2579,12 @@ async function startMediaRecorderFallback() {
             sendBtn.disabled = false;
           }
 
-          if (shouldSubmitAfterListening) {
-            statusText.textContent = "Answer captured. Sending it now...";
-            shouldSubmitAfterListening = false;
-            await submitAnswer();
-            return;
+        if (shouldSubmitAfterListening) {
+          statusText.textContent = "Answer captured. Sending it now...";
+          setHelperText("Answer captured from your recording. Sending it now...");
+          shouldSubmitAfterListening = false;
+          await submitAnswer();
+          return;
           }
         } else {
           if (activeUserBubble) {
@@ -2265,6 +2593,7 @@ async function startMediaRecorderFallback() {
           }
           shouldSubmitAfterListening = false;
           statusText.textContent = "No clear answer captured. Try speaking again.";
+          setHelperText("Speak clearly after clicking Speak Answer, or type your answer.");
         }
       } catch (error) {
         if (activeUserBubble) {
@@ -2272,8 +2601,9 @@ async function startMediaRecorderFallback() {
           activeUserBubble = null;
         }
         shouldSubmitAfterListening = false;
-        errorText.textContent = error.message || "Could not transcribe your answer.";
+        errorText.textContent = "";
         statusText.textContent = "Voice answer failed. Try again.";
+        setHelperText(error.message || "Could not transcribe your answer. Type your answer or try again.");
         stopStreamTracks(stream);
       }
     };
@@ -2282,8 +2612,10 @@ async function startMediaRecorderFallback() {
   } catch (error) {
     if (error && error.name === "NotAllowedError") {
       errorText.textContent = "Microphone permission is blocked. Allow mic access in your browser.";
+      setHelperText("Automatic captions need microphone permission.");
     } else {
-      errorText.textContent = "Could not start microphone recording.";
+      errorText.textContent = "";
+      setHelperText("Could not start microphone recording. Type your answer or try again.");
     }
   }
 }
@@ -2324,9 +2656,11 @@ function startRealTimeGeminiTranscription() {
       if (errMsg.includes("quota") || errMsg.includes("limit") || errMsg.includes("exceeded") || errMsg.includes("429")) {
         // Stop interval to prevent hammering the API key
         stopRealTimeGeminiTranscription();
-        errorText.textContent = "Gemini Free Tier rate limit reached. Real-time preview paused, but your voice is still being recorded in the background! Click 'Stop Speaking' when done.";
+        errorText.textContent = "";
+        setHelperText("Gemini rate limit reached. Real-time preview paused, but recording continues until you click Stop Speaking.");
       } else {
-        errorText.textContent = `Live Sync Error: ${error.message || error}`;
+        errorText.textContent = "";
+        setHelperText(`Live sync paused: ${error.message || error}`);
       }
     } finally {
       isIntervalTranscribing = false;
