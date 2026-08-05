@@ -132,6 +132,9 @@ if (toggleWebcamBtn) {
       stopWebcam();
     } else {
       try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Webcam access is only supported in secure contexts (localhost or HTTPS).");
+        }
         webcamStream = await navigator.mediaDevices.getUserMedia({ video: true });
         if (webcamVideo) {
           webcamVideo.srcObject = webcamStream;
@@ -143,7 +146,7 @@ if (toggleWebcamBtn) {
         toggleWebcamBtn.classList.add("listening");
       } catch (error) {
         console.error("Failed to open webcam:", error);
-        alert("Could not access camera. Check your permissions.");
+        alert(error.message || "Could not access camera. Check your permissions.");
       }
     }
   });
@@ -165,6 +168,8 @@ function stopWebcam() {
     toggleWebcamBtn.classList.remove("listening");
   }
 }
+
+updateStartAvailability();
 
 // ----------------------------------------------------
 // Theme & Settings Handlers
@@ -703,7 +708,7 @@ resumeFile.addEventListener("change", async (event) => {
 
 startBtn.addEventListener("click", async () => {
   if (!hasResumeReady()) {
-    errorText.textContent = "Upload a TXT, PDF, or DOCX resume first.";
+    errorText.textContent = "Upload a resume or configure a Target Job Role first.";
     return;
   }
 
